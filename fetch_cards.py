@@ -13,9 +13,12 @@ OUTPUT_FILE = "data/digimon_cards.json"
 IMAGE_DIR = "data/images"
 TIMEOUT = 30
 
-# API rate limit safety:
-REQUEST_DELAY = 1.0  # 1 second per request
+# VERY conservative delay
+REQUEST_DELAY = 2.5  # seconds between image downloads
 
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (compatible; DigimonTCGFetcher/1.0; +https://github.com)"
+}
 
 # -----------------------------
 # LOAD EXISTING DATA
@@ -26,14 +29,12 @@ def load_existing_data():
         return {
             "last_updated": None,
             "total_cards": 0,
-            "card_list": [],
             "cards": {},
-            "failed_cards": []
+            "failed_images": []
         }
 
     with open(OUTPUT_FILE, "r", encoding="utf-8") as f:
         return json.load(f)
-
 
 # -----------------------------
 # API FUNCTIONS
@@ -46,38 +47,20 @@ def fetch_all_cards():
         "sortdirection": "asc"
     }
 
-    headers = {
-        "User-Agent": "Mozilla/5.0 (compatible; DigimonTCGFetcher/1.0; +https://github.com)"
-    }
+    print("📡 Fetching master card list...")
+    resp = requests.get(url, params=params, headers=HEADERS, timeout=TIMEOUT)
 
-    print("Fetching master card list...")
+    if resp.status_code == 403:
+        raise RuntimeError("🚫 Digimon API is blocking this IP")
 
-    response = requests.get(url, params=params, headers=headers, timeout=TIMEOUT)
+    resp.raise_for_status()
+    return resp.json()
 
-    if response.status_code == 403:
-        raise RuntimeError(
-            "403 Forbidden: DigimonCard.io is blocking the request. "
-            "The site may be temporarily blocking GitHub IPs."
-        )
+# -----------------------------
+# IMAGE DOWNLOADER
+# -----------------------------
 
-    response.raise_for_status()
-    return response.json()
-
-
-def fetch_card_details(card_number):
-    url = f"{API_BASE}/search"
-    params = {"card": card_number}
-
-    headers = {
-        "User-Agent": "Mozilla/5.0 (compatible; DigimonTCGFetcher/1.0; +https://github.com)"
-    }
-
-    response = requests.get(url, params=params, headers=headers, timeout=TIMEOUT)
-    response.raise_for_status()
-    return response.json()
-
-
-def download_image(card_number, image_url):
+def download_image(card_number, image_url, failed_images):
     if not image_url:
         return
 
@@ -87,43 +70,39 @@ def download_image(card_number, image_url):
     if os.path.exists(file_path):
         return
 
-    headers = {
-        "User-Agent": "Mozilla/5.0 (compatible; DigimonTCGFetcher/1.0; +https://github.com)"
-    }
-
     try:
-        print(f"Downloading image for {card_number}")
-        img = requests.get(image_url, headers=headers, timeout=TIMEOUT)
+        print(f"🖼 Downloading image for {card_number}")
+        img = requests.get(image_url, headers=HEADERS, timeout=TIMEOUT)
         img.raise_for_status()
 
         with open(file_path, "wb") as f:
             f.write(img.content)
 
-    except Exception as e:
-        print(f"Image download failed for {card_number}: {e}")
+        time.sleep(REQUEST_DELAY)
 
+    except Exception as e:
+        print(f"⚠️ Image download failed for {card_number}: {e}")
+        failed_images.append(card_number)
 
 # -----------------------------
-# MAIN PROCESS
+# MAIN PROCESS (SAFE MODE)
 # -----------------------------
 
 def main():
-    print("Starting Digimon TCG incremental update...")
+    print("🚀 Starting Digimon TCG SAFE incremental update...")
+
+    os.makedirs("data", exist_ok=True)
+    os.makedirs("data/images", exist_ok=True)
 
     existing_data = load_existing_data()
     known_cards = set(existing_data["cards"].keys())
 
-    try:
-        all_cards = fetch_all_cards()
-    except Exception as e:
-        print("Master fetch failed:", e)
-        return
-    total_api_cards = len(all_cards)
+    all_cards = fetch_all_cards()
 
-    new_cards_found = 0
-    failed_cards = existing_data.get("failed_cards", [])
+    new_cards = 0
+    failed_images = existing_data.get("failed_images", [])
 
-    for index, card in enumerate(all_cards, start=1):
+    for card in all_cards:
         card_number = (
             card.get("cardnumber")
             or card.get("cardNumber")
@@ -133,39 +112,28 @@ def main():
         if not card_number or card_number in known_cards:
             continue
 
-        print(f"[{index}/{total_api_cards}] NEW CARD: {card_number}")
+        existing_data["cards"][card_number] = card
+        new_cards += 1
 
-        try:
-            details = fetch_card_details(card_number)
-            existing_data["cards"][card_number] = details
-            new_cards_found += 1
+        # Image field varies by API version
+        image_url = (
+            card.get("image_url")
+            or card.get("imageUrl")
+            or card.get("image")
+        )
 
-            # Try to get image URL from the API result
-            if isinstance(details, list) and len(details) > 0:
-                image_url = details[0].get("image_url") or details[0].get("imageUrl")
-                download_image(card_number, image_url)
+        download_image(card_number, image_url, failed_images)
 
-        except Exception as e:
-            print(f"Failed to fetch {card_number}: {e}")
-            failed_cards.append(card_number)
-
-        time.sleep(REQUEST_DELAY)
-
-    # Update metadata
-    existing_data["card_list"] = all_cards
     existing_data["total_cards"] = len(existing_data["cards"])
     existing_data["last_updated"] = datetime.utcnow().isoformat() + "Z"
-    existing_data["failed_cards"] = failed_cards
-
-    os.makedirs("data", exist_ok=True)
+    existing_data["failed_images"] = failed_images
 
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         json.dump(existing_data, f, indent=2, ensure_ascii=False)
 
-    print("Update complete")
-    print("New cards added:", new_cards_found)
-    print("Total stored cards:", existing_data["total_cards"])
-
+    print("✅ SAFE update complete")
+    print("🆕 New cards added:", new_cards)
+    print("📦 Total stored cards:", existing_data["total_cards"])
 
 # -----------------------------
 # ENTRY POINT
