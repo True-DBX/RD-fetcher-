@@ -24,7 +24,7 @@ HEADERS = {
 }
 
 # Toggle image downloading if needed
-DOWNLOAD_IMAGES = True   # set to False for data-only mode
+DOWNLOAD_IMAGES = False   # set to False for data-only mode
 
 
 # -----------------------------
@@ -62,7 +62,7 @@ def safe_get(url, params=None):
     )
 
     if resp.status_code == 429:
-        print("🚫 HARD RATE LIMIT HIT — backing off 30s")
+        print("HARD RATE LIMIT HIT — backing off 30s")
         time.sleep(30)
         return safe_get(url, params)
 
@@ -102,7 +102,7 @@ def fetch_all_cards():
     resp = safe_get(url, params)
 
     if resp.status_code == 403:
-        raise RuntimeError("🚫 Digimon API is blocking this IP")
+        raise RuntimeError("Digimon API is blocking this IP")
 
     return resp.json()
 
@@ -122,13 +122,13 @@ def download_image(card_number, image_url, failed_images):
         return
 
     try:
-        print(f"🖼 Downloading image for {card_number}")
+        print(f"Downloading image for {card_number}")
 
         wait_for_rate_limit()
         img = requests.get(image_url, headers=HEADERS, timeout=TIMEOUT)
 
         if img.status_code == 429:
-            print("🚫 Image host limit hit — backing off 30s")
+            print("Image host limit hit — backing off 30s")
             time.sleep(30)
             return download_image(card_number, image_url, failed_images)
 
@@ -138,7 +138,7 @@ def download_image(card_number, image_url, failed_images):
             f.write(img.content)
 
     except Exception as e:
-        print(f"⚠️ Image download failed for {card_number}: {e}")
+        print(f"Image download failed for {card_number}: {e}")
         failed_images.append(card_number)
 
 
@@ -147,7 +147,7 @@ def download_image(card_number, image_url, failed_images):
 # -----------------------------
 
 def main():
-    print("🚀 Starting Digimon TCG HARD-RATE-LIMIT SAFE update...")
+    print("Starting Digimon TCG HARD-RATE-LIMIT SAFE update...")
 
     os.makedirs("data", exist_ok=True)
     os.makedirs("data/images", exist_ok=True)
@@ -188,9 +188,9 @@ def main():
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         json.dump(existing_data, f, indent=2, ensure_ascii=False)
 
-    print("✅ HARD-SAFE update complete")
-    print("🆕 New cards added:", new_cards)
-    print("📦 Total stored cards:", existing_data["total_cards"])
+    print("HARD-SAFE update complete")
+    print("New cards added:", new_cards)
+    print("Total stored cards:", existing_data["total_cards"])
 
 
 # -----------------------------
